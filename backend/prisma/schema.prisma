@@ -1,0 +1,831 @@
+// ============================================================
+// Pass System — مخطط قاعدة البيانات (Prisma Schema)
+// منصة إدارة النقل والحجوزات
+// المطور: يونس العفيف
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== 1. المستخدمون والهوية ====================
+
+enum UserRole {
+  CUSTOMER
+  VENDOR
+  SUPPORT_ADMIN
+  FINANCE_ADMIN
+  ADMIN
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  LOCKED
+  DELETED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+model User {
+  id               String       @id @default(uuid())
+  email            String?      @unique
+  phone            String       @unique
+  passwordHash     String       @map("password_hash")
+  role             UserRole     @default(CUSTOMER)
+  status           UserStatus   @default(PENDING)
+  emailVerifiedAt  DateTime?    @map("email_verified_at")
+  phoneVerifiedAt  DateTime?    @map("phone_verified_at")
+  failedAttempts   Int          @default(0) @map("failed_attempts")
+  lockedUntil      DateTime?    @map("locked_until")
+  lastLoginAt      DateTime?    @map("last_login_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  deletedAt        DateTime?    @map("deleted_at")
+
+  profile        UserProfile?
+  vendor         Vendor?
+  sessions       Session[]
+  loginAttempts  LoginAttempt[]
+  passwordResets PasswordReset[]
+  verifications  Verification[]
+  activityLogs   ActivityLog[]
+  bookings       Booking[]
+  seatHolds      SeatHold[]
+  wallet         Wallet?
+
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+model UserProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique @map("user_id")
+  fullName    String   @map("full_name")
+  avatar      String?
+  nationalId  String?  @map("national_id")
+  birthDate   DateTime? @map("birth_date")
+  gender      Gender?
+  address     String?
+  preferences Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model PasswordReset {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_resets")
+}
+
+enum VerificationType {
+  EMAIL
+  PHONE
+  PASSWORD_RESET
+  MFA
+  LOGIN_OTP
+}
+
+model Verification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  type      VerificationType
+  code      String
+  expiresAt DateTime         @map("expires_at")
+  verified  Boolean          @default(false)
+  attempts  Int              @default(0)
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@map("verifications")
+}
+
+model LoginAttempt {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  identifier String
+  ip        String?
+  userAgent String?  @map("user_agent")
+  success   Boolean  @default(false)
+  reason    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([identifier])
+  @@map("login_attempts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  refreshToken String   @unique @map("refresh_token")
+  deviceInfo   String?  @map("device_info")
+  ip           String?
+  userAgent    String?  @map("user_agent")
+  revoked      Boolean  @default(false)
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  lastUsedAt   DateTime @default(now()) @map("last_used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  action    String
+  resource  String?
+  resourceId String? @map("resource_id")
+  ip        String?
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@map("activity_logs")
+}
+
+// ==================== 2. المزودون (المكاتب) ====================
+
+enum VendorStatus {
+  PENDING
+  UNDER_REVIEW
+  ACTIVE
+  SUSPENDED
+  REJECTED
+  CLOSED
+}
+
+enum VendorTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+model Vendor {
+  id            String       @id @default(uuid())
+  userId        String       @unique @map("user_id")
+  name          String
+  code          String       @unique
+  city          String
+  address       String?
+  phone         String
+  email         String?
+  logo          String?
+  description   String?
+  rating        Float        @default(0)
+  ratingCount   Int          @default(0)
+  status        VendorStatus @default(PENDING)
+  tier          VendorTier   @default(BRONZE)
+  points        Int          @default(0)
+  commissionRate Float       @default(0.10) @map("commission_rate")
+  verifiedAt    DateTime?    @map("verified_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents  VendorDocument[]
+  contracts  VendorContract[]
+  branches   VendorBranch[]
+  busTypes   BusType[]
+  routes     Route[]
+  trips      Trip[]
+  violations VendorViolation[]
+  payouts    VendorPayout[]
+
+  @@index([status])
+  @@index([city])
+  @@map("vendors")
+}
+
+enum DocumentType {
+  COMMERCIAL_REGISTRY
+  LICENSE
+  OWNER_ID
+  TAX_CARD
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model VendorDocument {
+  id        String         @id @default(uuid())
+  vendorId  String         @map("vendor_id")
+  type      DocumentType
+  fileUrl   String         @map("file_url")
+  status    DocumentStatus @default(PENDING)
+  note      String?
+  reviewedBy String?       @map("reviewed_by")
+  reviewedAt DateTime?     @map("reviewed_at")
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("vendor_documents")
+}
+
+model VendorContract {
+  id             String    @id @default(uuid())
+  vendorId       String    @map("vendor_id")
+  commissionRate Float     @map("commission_rate")
+  startDate      DateTime  @map("start_date")
+  endDate        DateTime? @map("end_date")
+  terms          String?
+  active         Boolean   @default(true)
+  archived       Boolean   @default(false)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("vendor_contracts")
+}
+
+model VendorBranch {
+  id       String  @id @default(uuid())
+  vendorId String  @map("vendor_id")
+  name     String
+  city     String
+  address  String?
+  phone    String?
+  isMain   Boolean @default(false) @map("is_main")
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("vendor_branches")
+}
+
+enum ViolationSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model VendorViolation {
+  id          String            @id @default(uuid())
+  vendorId    String            @map("vendor_id")
+  type        String
+  description String
+  severity    ViolationSeverity @default(LOW)
+  points      Int               @default(0)
+  penalty     String?
+  evidence    String?
+  appealStatus String?          @map("appeal_status")
+  createdAt   DateTime          @default(now()) @map("created_at")
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("vendor_violations")
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
+model VendorPayout {
+  id         String       @id @default(uuid())
+  vendorId   String       @map("vendor_id")
+  amount     Decimal      @db.Decimal(14, 2)
+  currency   String       @default("YER")
+  status     PayoutStatus @default(PENDING)
+  periodFrom DateTime     @map("period_from")
+  periodTo   DateTime     @map("period_to")
+  reference  String?
+  note       String?
+  paidAt     DateTime?    @map("paid_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("vendor_payouts")
+}
+
+// ==================== 3. المسارات والرحلات ====================
+
+enum RouteType {
+  INTERNAL
+  INTERNATIONAL
+}
+
+enum RouteStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+model Route {
+  id          String      @id @default(uuid())
+  vendorId    String?     @map("vendor_id")
+  origin      String
+  destination String
+  distanceKm  Float?      @map("distance_km")
+  durationMin Int?        @map("duration_min")
+  type        RouteType   @default(INTERNAL)
+  status      RouteStatus @default(ACTIVE)
+  popular     Boolean     @default(false)
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  vendor Vendor?      @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  stops  RouteStop[]
+  trips  Trip[]
+
+  @@index([origin, destination])
+  @@index([type])
+  @@map("routes")
+}
+
+model RouteStop {
+  id        String @id @default(uuid())
+  routeId   String @map("route_id")
+  name      String
+  order     Int
+  arrivalMin Int?  @map("arrival_min")
+
+  route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@index([routeId])
+  @@map("route_stops")
+}
+
+enum BusCategory {
+  NORMAL
+  LUXURY
+  VIP
+}
+
+model BusType {
+  id          String      @id @default(uuid())
+  vendorId    String?     @map("vendor_id")
+  name        String
+  description String?
+  capacity    Int
+  category    BusCategory @default(NORMAL)
+  amenities   Json?
+  layoutRows  Int         @default(10) @map("layout_rows")
+  layoutCols  Int         @default(4) @map("layout_cols")
+  aisleAfter  Int         @default(2) @map("aisle_after")
+  layoutConfig Json?      @map("layout_config")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  vendor     Vendor?     @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  seatLayout SeatLayout?
+  trips      Trip[]
+
+  @@map("bus_types")
+}
+
+enum TripStatus {
+  SCHEDULED
+  OPEN
+  BOARDING
+  DEPARTED
+  COMPLETED
+  CANCELLED
+  DELAYED
+}
+
+model Trip {
+  id            String     @id @default(uuid())
+  vendorId      String     @map("vendor_id")
+  routeId       String     @map("route_id")
+  busTypeId     String?    @map("bus_type_id")
+  tripCode      String     @unique @map("trip_code")
+  departureTime DateTime   @map("departure_time")
+  arrivalTime   DateTime   @map("arrival_time")
+  priceYer      Decimal    @db.Decimal(12, 2) @map("price_yer")
+  priceSar      Decimal?   @db.Decimal(12, 2) @map("price_sar")
+  totalSeats    Int        @map("total_seats")
+  availableSeats Int       @map("available_seats")
+  status        TripStatus @default(SCHEDULED)
+  published     Boolean    @default(false)
+  notes         String?
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  vendor    Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  route     Route     @relation(fields: [routeId], references: [id])
+  busType   BusType?  @relation(fields: [busTypeId], references: [id], onDelete: SetNull)
+  seats     Seat[]
+  bookings  Booking[]
+
+  @@index([departureTime])
+  @@index([status])
+  @@index([vendorId])
+  @@map("trips")
+}
+
+// ==================== 4. المقاعد ====================
+
+enum SeatType {
+  NORMAL
+  PREMIUM
+  VIP
+}
+
+enum SeatPosition {
+  WINDOW
+  AISLE
+  MIDDLE
+  FRONT
+}
+
+enum SeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+  DISABLED
+}
+
+model SeatLayout {
+  id           String   @id @default(uuid())
+  busTypeId    String   @unique @map("bus_type_id")
+  rows         Int
+  cols         Int
+  aisleAfter   Int      @default(2) @map("aisle_after")
+  config       Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  busType BusType @relation(fields: [busTypeId], references: [id], onDelete: Cascade)
+
+  @@map("seat_layouts")
+}
+
+model Seat {
+  id         String       @id @default(uuid())
+  tripId     String       @map("trip_id")
+  layoutId   String?      @map("layout_id")
+  seatNumber Int          @map("seat_number")
+  row        Int
+  col        Int
+  type       SeatType     @default(NORMAL)
+  position   SeatPosition @default(WINDOW)
+  status     SeatStatus   @default(AVAILABLE)
+  priceYer   Decimal?     @db.Decimal(12, 2) @map("price_yer")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  trip       Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  holds      SeatHold[]
+  passengers BookingPassenger[]
+
+  @@unique([tripId, seatNumber])
+  @@index([tripId, status])
+  @@map("seats")
+}
+
+enum HoldStatus {
+  ACTIVE
+  CONVERTED
+  EXPIRED
+  RELEASED
+}
+
+model SeatHold {
+  id        String     @id @default(uuid())
+  seatId    String     @map("seat_id")
+  tripId    String     @map("trip_id")
+  userId    String?    @map("user_id")
+  sessionId String?    @map("session_id")
+  status    HoldStatus @default(ACTIVE)
+  expiresAt DateTime   @map("expires_at")
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  seat Seat @relation(fields: [seatId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tripId])
+  @@index([status, expiresAt])
+  @@map("seat_holds")
+}
+
+// ==================== 5. الحجوزات ====================
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+  EXPIRED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PENDING
+  PAID
+  PARTIALLY_REFUNDED
+  REFUNDED
+  FAILED
+}
+
+model Booking {
+  id            String        @id @default(uuid())
+  bookingCode   String        @unique @map("booking_code")
+  userId        String        @map("user_id")
+  tripId        String        @map("trip_id")
+  totalYer      Decimal       @db.Decimal(14, 2) @map("total_yer")
+  totalSar      Decimal?      @db.Decimal(14, 2) @map("total_sar")
+  seatCount     Int           @map("seat_count")
+  status        BookingStatus @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID) @map("payment_status")
+  contactName   String?       @map("contact_name")
+  contactPhone  String?       @map("contact_phone")
+  notes         String?
+  cancelledAt   DateTime?     @map("cancelled_at")
+  cancelReason  String?       @map("cancel_reason")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  user       User               @relation(fields: [userId], references: [id])
+  trip       Trip               @relation(fields: [tripId], references: [id])
+  passengers BookingPassenger[]
+  payments   Payment[]
+  history    BookingHistory[]
+  refunds    Refund[]
+  invoice    Invoice?
+
+  @@index([userId])
+  @@index([tripId])
+  @@index([status])
+  @@map("bookings")
+}
+
+model BookingPassenger {
+  id             String  @id @default(uuid())
+  bookingId      String  @map("booking_id")
+  seatId         String? @map("seat_id")
+  fullName       String  @map("full_name")
+  identityNumber String? @map("identity_number")
+  phone          String?
+  gender         Gender?
+  birthDate      DateTime? @map("birth_date")
+  specialNeeds   String? @map("special_needs")
+  isLead         Boolean @default(false) @map("is_lead")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  seat    Seat?   @relation(fields: [seatId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@map("booking_passengers")
+}
+
+model BookingHistory {
+  id        String   @id @default(uuid())
+  bookingId String   @map("booking_id")
+  action    String
+  fromState String?  @map("from_state")
+  toState   String?  @map("to_state")
+  actorId   String?  @map("actor_id")
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@map("booking_history")
+}
+
+// ==================== 6. المدفوعات والمالية ====================
+
+enum PaymentMethodType {
+  KUREIMI
+  TADAMON
+  JAWWAL_PAY
+  STRIPE
+  CASH
+  WALLET
+  BANK_TRANSFER
+}
+
+enum PaymentState {
+  INITIATED
+  PENDING
+  PROCESSING
+  SUCCEED
+  FAILED
+  CANCELLED
+}
+
+model Payment {
+  id          String            @id @default(uuid())
+  bookingId   String            @map("booking_id")
+  method      PaymentMethodType
+  amount      Decimal           @db.Decimal(14, 2)
+  currency    String            @default("YER")
+  status      PaymentState      @default(INITIATED)
+  gatewayRef  String?           @map("gateway_ref")
+  gatewayData Json?             @map("gateway_data")
+  failureReason String?         @map("failure_reason")
+  paidAt      DateTime?         @map("paid_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  booking      Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  refunds      Refund[]
+
+  @@index([bookingId])
+  @@index([status])
+  @@map("payments")
+}
+
+enum TransactionType {
+  PAYMENT
+  REFUND
+  PAYOUT
+  FEE
+}
+
+model Transaction {
+  id         String          @id @default(uuid())
+  paymentId  String          @map("payment_id")
+  type       TransactionType
+  amount     Decimal         @db.Decimal(14, 2)
+  currency   String          @default("YER")
+  status     String          @default("SUCCESS")
+  reference  String?
+  metadata   Json?
+  createdAt  DateTime        @default(now()) @map("created_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@map("transactions")
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  PROCESSING
+  COMPLETED
+  REJECTED
+}
+
+model Refund {
+  id         String       @id @default(uuid())
+  paymentId  String       @map("payment_id")
+  bookingId  String       @map("booking_id")
+  amount     Decimal      @db.Decimal(14, 2)
+  currency   String       @default("YER")
+  reason     String?
+  status     RefundStatus @default(REQUESTED)
+  refundRef  String?      @map("refund_ref")
+  processedAt DateTime?   @map("processed_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@map("refunds")
+}
+
+model Invoice {
+  id          String   @id @default(uuid())
+  bookingId   String   @unique @map("booking_id")
+  invoiceNo   String   @unique @map("invoice_no")
+  amount      Decimal  @db.Decimal(14, 2)
+  currency    String   @default("YER")
+  taxAmount   Decimal  @default(0) @db.Decimal(14, 2) @map("tax_amount")
+  issuedAt    DateTime @default(now()) @map("issued_at")
+  pdfUrl      String?  @map("pdf_url")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("invoices")
+}
+
+model Wallet {
+  id        String   @id @default(uuid())
+  userId    String   @unique @map("user_id")
+  balance   Decimal  @default(0) @db.Decimal(14, 2)
+  currency  String   @default("YER")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+enum WalletTxType {
+  TOPUP
+  DEBIT
+  REFUND
+}
+
+model WalletTransaction {
+  id        String       @id @default(uuid())
+  walletId  String       @map("wallet_id")
+  type      WalletTxType
+  amount    Decimal      @db.Decimal(14, 2)
+  balanceAfter Decimal   @db.Decimal(14, 2) @map("balance_after")
+  reference String?
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@map("wallet_transactions")
+}
+
+model ExchangeRate {
+  id        String   @id @default(uuid())
+  fromCurrency String @map("from_currency")
+  toCurrency   String @map("to_currency")
+  rate      Decimal  @db.Decimal(14, 6)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([fromCurrency, toCurrency])
+  @@map("exchange_rates")
+}
+
+// ==================== 7. النواة والإشعارات ====================
+
+enum NotificationChannel {
+  SMS
+  EMAIL
+  PUSH
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+model Notification {
+  id        String              @id @default(uuid())
+  userId    String?             @map("user_id")
+  channel   NotificationChannel
+  recipient String
+  subject   String?
+  body      String
+  status    NotificationStatus  @default(QUEUED)
+  error     String?
+  sentAt    DateTime?           @map("sent_at")
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([status])
+  @@map("notifications")
+}
+
+model PlatformConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       Json
+  description String?
+  updatedBy   String?  @map("updated_by")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_configs")
+}
